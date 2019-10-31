@@ -310,27 +310,31 @@ def get_min_box(pts):
     #print ('min_box \n',min_box)
     return min_box
                
-def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,pf):
-
+##def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,pf):
+def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd):
+##def plot_response_surface(X,Y,Z):
     # Plot response surface
     fig = plt.figure()
     #fig.gca(
     ax = plt.axes(projection='3d')
     #collect data
-##    
+    
 ##    X_grid = np.array(X)
 ##    Y_grid = np.array(Y)
 ##    X,Y = np.meshgrid(X_grid,Y_grid)
-##    
+    
 
     # Plot the surface
     surf = ax.plot_surface(X,Y,Z,cmap=cm.coolwarm,
                            linewidth=1,antialiased=False)
     
     ax.plot3D(X_gd,Y_gd,Z_gd)
-    ax.scatter3D(X_gd,Y_gd,Z_gd,  cmap='Greens');
+    ax.scatter3D(X_gd,Y_gd,Z_gd,  cmap='Greens')
+    ax.scatter3D(stitcher.best_x_from_brute_force,stitcher.best_y_from_brute_force,
+                 stitcher.e_loss_min, cmsp='Reds');
+
     # Customize the z axis.
-    ax.set_zlim(0.6, 1.0)
+    ax.set_zlim(0.6, 1.25)
     ax.zaxis.set_major_locator(LinearLocator(10))
     ax.zaxis.set_major_formatter(FormatStrFormatter('%.04f'))
 
@@ -341,12 +345,12 @@ def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,pf):
     plt.show()
         
 
-    # use pickle file passed to routine
-    with open(pf, 'wb') as fid:
-        pickle.dump(ax, fid) # save as pickle file for later reuse
-    
-    plt.pause(1)
-    x = input('Enter any key to continue: ')
+##    # use pickle file passed to routine
+##    with open(pf, 'wb') as fid:
+##        pickle.dump(ax, fid) # save as pickle file for later reuse
+##    
+##    plt.pause(1)
+##    x = input('Enter any key to continue: ')
     plt.close()
     
     return
@@ -459,6 +463,9 @@ class Proximity_stitcher:
         self.cov_B = []
         self.A_cropped = None
         self.B_cropped = None
+        self.e_loss_min = 0.
+        self.best_x_from_brute_force = 0.
+        self.best_y_from_brute_force = 0.
 
     def proximity_stitch(self, imA,imB,fn_pickle):
         self.ImageA = imA
@@ -527,7 +534,7 @@ class Proximity_stitcher:
         self.e_losses = np.array(self.e_losses)
         Z = self.e_losses.reshape((plot_size,plot_size))
         print('lenght of e_losses',plot_size,'\n e_losses: \n',Z)
-        plot_response_surface(X,Y,Z)
+        #plot_response_surface(X,Y,Z)
 
      
 ##      Reset Mb
@@ -543,13 +550,16 @@ class Proximity_stitcher:
         epochs = int(input('Enter maximum number of epochs: '))
         (X_gradent_descent,Y_gradent_descent,self.e_losses) = self.find_best_match(epochs) 
 
-##        X_gd = np.array(X_gradent_descent)
-##        Y_gd = np.array(Y_gradent_descent)
-##        #X, Y = np.meshgrid(X, Y)
-##        Z_gd = np.array(self.e_losses)
-##        #Z = self.e_losses.reshape((plot_size,plot_size))
-##        plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,self.fn_pickle)
-        
+        X_gd = np.array(X_gradent_descent)
+        Y_gd = np.array(Y_gradent_descent)
+        #X, Y = np.meshgrid(X, Y)
+        Z_gd = np.array(self.e_losses)
+        print ('X_gd: \n',X_gd)
+        print ('Y_gd: \n',Y_gd)
+        print ('Z_gd: \n',Z_gd)
+        #Z = self.e_losses.reshape((plot_size,plot_size))
+        ##plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,self.fn_pickle)
+        plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd)
         return (self.A_cropped,self.B_cropped)
 
     def e_loss_from_M(self,Mb):
@@ -572,7 +582,7 @@ class Proximity_stitcher:
         e_losses = []
         self.Mb_last = self.Mb
         e_loss = self.e_loss_from_M(self.Mb)
-        e_losses.append(e_loss)
+        #e_losses.append(e_loss)
         for epoch in range(epochs):            
             print('e_loss',e_loss)
             if e_loss < e_loss_min:
@@ -590,24 +600,27 @@ class Proximity_stitcher:
             print('grad \n',grad)
             gamma = 10
             
-##            if epoch != 0:
-##                grad_last = calculate_gradient(self.e_loss_from_M,self.Mb_last)
-##                print('self.Mb_last \n',self.Mb_last)
-##                print('grad_last \n',grad_last)
-##                denominator = np.linalg.norm(grad-grad_last)**2
-##                print ('denominator',denominator)
-##                Mb_Mb_last = self.Mb-self.Mb_last
-##                print ('Mb_Mb_last \n',Mb_Mb_last )
-##                print ('dot product \n',np.transpose(Mb_Mb_last)*(grad-grad_last) )
-##                norm = np.linalg.norm(np.transpose(Mb_Mb_last)*(grad-grad_last))
-##                print ('norm',norm)
-##                print ('(grad-grad_last)',(grad-grad_last))
-##                try:
-##                    gamma = norm/denominator
-##                    print('%%%%%% gamma %%%%%%',gamma)
-##                except:
-##                    print('##### exception on gamma calculation #####')
-##                    gamma = 10
+            if epoch != 0:
+                grad_last = calculate_gradient(self.e_loss_from_M,self.Mb_last)
+                print('self.Mb_last \n',self.Mb_last)
+                print('grad_last \n',grad_last)
+                denominator = np.linalg.norm(grad-grad_last)**2
+                print ('denominator',denominator)
+                Mb_Mb_last = self.Mb-self.Mb_last
+                print ('Mb-Mb_last \n',Mb_Mb_last )
+                print ('dot product \n',np.transpose(Mb_Mb_last)*(grad-grad_last) )
+                norm = np.linalg.norm(np.transpose(Mb_Mb_last)*(grad-grad_last))
+                print ('norm',norm)
+                print ('(grad-grad_last)',(grad-grad_last))
+                if abs(denominator) < 0.001:
+                    gamma = 10.0
+                else:
+                    try:
+                        gamma = norm/denominator
+                        print('%%%%%% gamma %%%%%%',gamma)
+                    except:
+                        print('##### exception on gamma calculation #####')
+                        gamma = 10
 
             try:            
                 print('Before update self.Mb[',epoch,'] \n',self.Mb)
@@ -620,7 +633,7 @@ class Proximity_stitcher:
         return (X,Y,e_losses)
 
     def find_best_match_brute_force(self,tile_size):
-        e_loss_min = 100.
+        self.e_loss_min = 100.
         e_losses = []
         X = []
         Y = []
@@ -637,9 +650,11 @@ class Proximity_stitcher:
                 e_loss = self.e_loss_from_M(Mb_working)
                 if i == 0:
                     X.append(dx)
-                if e_loss < e_loss_min:
-                    e_loss_min = e_loss
+                if e_loss < self.e_loss_min:
+                    self.e_loss_min = e_loss
                     self.Mb = Mb_working
+                    self.best_x_from_brute_force = Mb_working[0][2]
+                    self.best_y_from_brute_force = Mb_working[1][2]
 
                 e_losses.append(e_loss)
                 dx = dx + tile_size
@@ -649,7 +664,7 @@ class Proximity_stitcher:
             Y.append(dy)
             dy = dy + tile_size
             Mb_working[1][2] = dy
-        print('&*&* Best e_loss &*&*',e_loss_min)
+        print('&*&* Best e_loss &*&*',self.e_loss_min)
         print('&*&* Best Mb &*&* \n ',self.Mb)
         return (X,Y,e_losses)
                               
