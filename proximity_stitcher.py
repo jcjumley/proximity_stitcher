@@ -20,7 +20,7 @@ from mpl_toolkits.mplot3d import Axes3D  # noqa: F401 unused import
 import matplotlib.pyplot as plt
 from matplotlib import cm
 from matplotlib.ticker import LinearLocator, FormatStrFormatter
-
+from copy import copy, deepcopy
 root = tkinter.Tk()
 FOV = 78.8 #Mavic Pro camer field of view 78.8 Deg
 EARTH_MEAN_RADIUS  =   6371.01	# In km
@@ -311,7 +311,8 @@ def get_min_box(pts):
     return min_box
                
 ##def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,pf):
-def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd):
+def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,best_x_from_brute_force,best_y_from_brute_force,
+                 e_loss_min):
 ##def plot_response_surface(X,Y,Z):
     # Plot response surface
     fig = plt.figure()
@@ -330,11 +331,11 @@ def plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd):
     
     ax.plot3D(X_gd,Y_gd,Z_gd)
     ax.scatter3D(X_gd,Y_gd,Z_gd,  cmap='Greens')
-    ax.scatter3D(stitcher.best_x_from_brute_force,stitcher.best_y_from_brute_force,
-                 stitcher.e_loss_min, cmsp='Reds');
+    ax.scatter3D(best_x_from_brute_force,best_y_from_brute_force,
+                 e_loss_min, cmap='Reds');
 
     # Customize the z axis.
-    ax.set_zlim(0.6, 1.25)
+    ax.set_zlim(0.4, 1.25)
     ax.zaxis.set_major_locator(LinearLocator(10))
     ax.zaxis.set_major_formatter(FormatStrFormatter('%.04f'))
 
@@ -406,33 +407,6 @@ def calculate_eig_loss(A,B):
     #print (' eigenvalue_loss',eig_loss)
     return eig_loss
 
-        
-def calculate_gradient(fnc,M):
-    M1 = M
-    EPS = 1.0E-9
-    FACTOR = 5
-    f_0 = fnc(M)
-    #print('f_0',f_0)
-    #print('M:\n',M)
-    #print('len(M)',len(M))
-    grad = np.zeros([len(M),len(M)],dtype = float)
-    #print('grad',grad)
-    M_star = M1
-    for i in range (len(M)-1):
-        for j in range (2,len(M)):
-            del_x = FACTOR
-            M_star[i][j] += del_x
-            del_y = fnc(M_star)-f_0
-
-            #print('i',i,'j',j,'del_x',del_x,'del_y',del_y)
-            #print ('M_star[',i,'][',j,'] ',M_star[i][j])
-            M_star = M1
-            try:
-                grad[i][j] = del_y/del_x
-            except:
-                grad[i][j] = EPS
-    #print('grad: \n',grad)
-    return grad
 
 class Proximity_stitcher:
     def __init__(self):
@@ -467,7 +441,7 @@ class Proximity_stitcher:
         self.best_x_from_brute_force = 0.
         self.best_y_from_brute_force = 0.
 
-    def proximity_stitch(self, imA,imB,fn_pickle):
+    def proximity_stitch(self, imA,imB):
         self.ImageA = imA
         self.altitude_bias_left_image = float(input('Enter altitude_bias for left image: '))
 
@@ -479,7 +453,7 @@ class Proximity_stitcher:
         self.ImageB = imB
         self.altitude_bias_right_image = float(input('Enter altitude_bias for right image: '))
 
-        self.fn_pickle = fn_pickle   #Pickle file name
+        #self.fn_pickle = fn_pickle   #Pickle file name
         
         # get gps data from right image
         self.exf_B = get_exif(self.ImageB)
@@ -515,17 +489,19 @@ class Proximity_stitcher:
         # Build translation matrix Mb (first estimate)
         self.Mb = np.identity(3,dtype=np.float64)
         try:
-            #self.Mb[0][2] = self.test[1]/self.pixel_sizeB  # + 20
-            self.Mb[0][2] = 2580
-            #self.Mb[1][2] = -self.test[0]/self.pixel_sizeB # - 645      # for debugging purposes added 10
-            self.Mb[1][2] = -346
+            self.Mb[0][2] = self.test[1]/self.pixel_sizeB  # + 20
+            #self.Mb[0][2] = 2580
+            self.Mb[1][2] = -self.test[0]/self.pixel_sizeB # - 645      # for debugging purposes added 10
+            #self.Mb[1][2] = -346
         except:
             self.Mb[0][2] = 0.
             self.Mb[1][2] = 0.
         print ('Mb \n',self.Mb)
 
         # Brute force metnod
-        (X_grid,Y_grid,self.e_losses) = self.find_best_match_brute_force(10)
+        tile_size = int(input ('enter tile size '))
+        n_iter = int(input ('enter number of itterations '))
+        (X_grid,Y_grid,self.e_losses) = self.find_best_match_brute_force(tile_size,n_iter)
         plot_size = int(len(X_grid))
         #print('lenght of e_losses',plot_size,'\n e_losses: \n',self.e_losses)
         X = np.array(X_grid)
@@ -559,11 +535,40 @@ class Proximity_stitcher:
         print ('Z_gd: \n',Z_gd)
         #Z = self.e_losses.reshape((plot_size,plot_size))
         ##plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,self.fn_pickle)
-        plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd)
+        plot_response_surface(X,Y,Z,X_gd,Y_gd,Z_gd,
+                              self.best_x_from_brute_force,self.best_y_from_brute_force,self.e_loss_min)
         return (self.A_cropped,self.B_cropped)
 
-    def e_loss_from_M(self,Mb):
-        self.Mb = Mb
+    def calculate_gradient(self,fnc):
+        M1 = deepcopy(self.Mb)
+        EPS = 1.0E-9
+        FACTOR = 5
+        f_0 = fnc(M1)
+        #print('f_0',f_0)
+        #print('M:\n',M)
+        #print('len(M)',len(M))
+        grad = np.zeros([len(M1),len(M1)],dtype = float)
+        #print('grad',grad)
+        M_star = deepcopy(M1)
+        for i in range (len(M1)-1):
+            for j in range (2,len(M1)):
+                del_x = FACTOR
+                M_star[i][j] = M_star[i][j] + del_x
+                del_y = fnc(M_star)-f_0
+
+                #print('i',i,'j',j,'del_x',del_x,'del_y',del_y)
+                #print ('M_star[',i,'][',j,'] ',M_star[i][j])
+                M_star = deepcopy(M1)
+                try:
+                    grad[i][j] = del_y/del_x
+                except:
+                    grad[i][j] = EPS
+        #print('grad: \n',grad)
+        return grad
+
+    #def e_loss_from_M(self,Mb):
+    def e_loss_from_M(self,Mb): 
+        #self.Mb = Mb
         e_loss = 0.
         (self.A_cropped,self.B_cropped) = self.calculate_overlaps_with_matrix(Mb)
         self.cov_A = cal_covariance(self.A_cropped)
@@ -573,86 +578,104 @@ class Proximity_stitcher:
 
     # calculate argminMb(e_loss)
     def find_best_match(self,epochs):
-        gamma = 10
+##        gamma = np.zeros([3,3],dtype = float)
+##        gamma[0][2]= 1000
+##        gamma[1][2]= 1000
+        gamma = 1000.0
         X = []
         Y = []
         e_loss_min = 1.0E+6
         e_loss_cutoff = 0.1
         e_loss_last = e_loss_min
         e_losses = []
-        self.Mb_last = self.Mb
+        #self.Mb_last = deepcopy(self.Mb)
         e_loss = self.e_loss_from_M(self.Mb)
+        #e_loss = self.e_loss_from_M()
         #e_losses.append(e_loss)
-        for epoch in range(epochs):            
+        for epoch in range(epochs):         
             print('e_loss',e_loss)
             if e_loss < e_loss_min:
                 e_loss_min = e_loss            
             X.append(self.Mb[0][2])
-            Y.append(self.Mb[1][2])         
+            Y.append(self.Mb[1][2])
+            e_loss = self.e_loss_from_M(self.Mb)
+            #e_loss = self.e_loss_from_M()    
+            e_losses.append(e_loss)
             if e_loss_last < 0.9*e_loss:
                 print('reversal in e_loss',e_loss_last,e_loss)
                 break
-            e_loss_last = e_loss
+            if epoch > 3:    # do at least 3 epochs           
+                e_loss_last = e_loss
+                try:
+                    cut_ratio = abs(1.0 - abs(e_loss/e_loss_last))
+                except:
+                    cut_ratio = 0.0
+                if cut_ratio < 1.0E-6:
+                    print ('solution converged after',epoch,'itterations at:',e_loss)
+                    break
             if e_loss_min < e_loss_cutoff:
                 print('e_loss_min',e_loss_min)
                 break
-            grad = calculate_gradient(self.e_loss_from_M,self.Mb)
+            grad = self.calculate_gradient(self.e_loss_from_M)
             print('grad \n',grad)
-            gamma = 10
-            
-            if epoch != 0:
-                grad_last = calculate_gradient(self.e_loss_from_M,self.Mb_last)
+##            
+            if epoch > 1:
                 print('self.Mb_last \n',self.Mb_last)
                 print('grad_last \n',grad_last)
-                denominator = np.linalg.norm(grad-grad_last)**2
-                print ('denominator',denominator)
-                Mb_Mb_last = self.Mb-self.Mb_last
-                print ('Mb-Mb_last \n',Mb_Mb_last )
-                print ('dot product \n',np.transpose(Mb_Mb_last)*(grad-grad_last) )
-                norm = np.linalg.norm(np.transpose(Mb_Mb_last)*(grad-grad_last))
-                print ('norm',norm)
-                print ('(grad-grad_last)',(grad-grad_last))
-                if abs(denominator) < 0.001:
-                    gamma = 10.0
+                delta_grad = grad-grad_last
+                delta_grad_flattened = np.reshape(delta_grad,(1,9))
+                delta_Mb = self.Mb - self.Mb_last
+                delta_Mb_flattened = np.reshape(delta_Mb,(9,1))
+                numerator = np.matmul(delta_grad_flattened,delta_Mb_flattened)
+                denominator = np.matmul(delta_grad_flattened,np.reshape(delta_grad_flattened,(9,1)))              
+                print ('numerator',numerator,'denominator',denominator)
+
+                if abs(denominator) < 1.0E-15:
+                    gamma = 1000.0
                 else:
                     try:
-                        gamma = norm/denominator
+                        gamma = numerator/denominator
                         print('%%%%%% gamma %%%%%%',gamma)
                     except:
                         print('##### exception on gamma calculation #####')
-                        gamma = 10
-
+                        gamma = 1000.0
+            self.Mb_last = deepcopy(self.Mb)
             try:            
                 print('Before update self.Mb[',epoch,'] \n',self.Mb)
                 self.Mb = self.Mb - gamma*grad
                 print('After update self.Mb[',epoch,'] \n',self.Mb)
             except:
                 print('****** Exception ****** self.Mb[',epoch,'] \n',self.Mb)
-            e_loss = self.e_loss_from_M(self.Mb)
-            e_losses.append(e_loss)
+##            e_loss = self.e_loss_from_M(self.Mb)
+##            #e_loss = self.e_loss_from_M()    
+##            e_losses.append(e_loss)
+            grad_last = deepcopy(grad)
         return (X,Y,e_losses)
 
-    def find_best_match_brute_force(self,tile_size):
+    def find_best_match_brute_force(self,tile_size,n_iterations=10):
         self.e_loss_min = 100.
         e_losses = []
         X = []
         Y = []
         Mb_working = self.Mb
-        dx_start = Mb_working[0][2] - 10*tile_size
-        dy_start = Mb_working[1][2] - 10*tile_size
+        print("Mb_working \n",Mb_working)
+        dx_start = Mb_working[0][2] - int(n_iterations*tile_size/2)
+        dy_start = Mb_working[1][2] - (n_iterations*tile_size/2)
         dx = dx_start
         dy = dy_start
 
-        for i in range(40):
+        for i in range(n_iterations):
             dx = dx_start
             Mb_working[0][2] = dx
-            for j in range(40):
+            for j in range(n_iterations):
+                self.Mb = Mb_working
                 e_loss = self.e_loss_from_M(Mb_working)
+                #e_loss = self.e_loss_from_M()
                 if i == 0:
                     X.append(dx)
                 if e_loss < self.e_loss_min:
                     self.e_loss_min = e_loss
-                    self.Mb = Mb_working
+                    #self.Mb = Mb_working
                     self.best_x_from_brute_force = Mb_working[0][2]
                     self.best_y_from_brute_force = Mb_working[1][2]
 
@@ -671,7 +694,7 @@ class Proximity_stitcher:
         
 
     def calculate_overlaps_with_matrix(self,Mb):
-        self.Mb = Mb
+        #self.Mb = Mb
 
 
         """
@@ -710,10 +733,10 @@ class Proximity_stitcher:
 
         # Map image B corners to image A coordinates
         #print ('self.Mb',self.Mb)
-        corners_B_star = np.transpose(np.matmul(self.Mb,np.transpose(corners_B)))
+        corners_B_star = np.transpose(np.matmul(Mb,np.transpose(corners_B)))
         # added scale factor 1/w JHC 6/23/2019
         try:
-            corners_B_star *= 1.0/self.Mb[2][2]
+            corners_B_star *= 1.0/Mb[2][2]
             #print('Worked!!')
             #print('corners_B_star\n',corners_B_star)
         except:
@@ -761,17 +784,15 @@ def stitch_images():
     img2 = ImageFile_B.name
     ImageB = PIL.Image.open(img2)
 
-    # Get directory name to hold pickle file
-    print ('Please select directory to hold pickle file: ')
-    pickle_file_directory = get_directory_name('Please select directory to hold pickle file: ')
-    fn_pickle = pickle_file_directory  + 'respinse_surface_plot.pickle'
-    print ('pickle file ',fn_pickle)
-
-
-    
+##    # Get directory name to hold pickle file
+##    print ('Please select directory to hold pickle file: ')
+##    pickle_file_directory = get_directory_name('Please select directory to hold pickle file: ')
+##    fn_pickle = pickle_file_directory  + 'respinse_surface_plot.pickle'
+##    print ('pickle file ',fn_pickle)
+  
 
     stitcher = Proximity_stitcher()
-    (imgA_cropped, imgB_cropped) = stitcher.proximity_stitch(ImageA,ImageB,fn_pickle)
+    (imgA_cropped, imgB_cropped) = stitcher.proximity_stitch(ImageA,ImageB)
     
     sse =  calculate_sse(stitcher.cov_A,stitcher.cov_B)
 
